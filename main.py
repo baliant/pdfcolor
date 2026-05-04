@@ -8,12 +8,12 @@ st.set_page_config(page_title="PDF Rectangle Color Counter", layout="wide")
 st.title("PDF Colored Rectangle Counter")
 
 st.write(
-    "Upload a PDF, define target fill colors, and count rectangle annotations by fill color."
+    "Upload a PDF, define colors, and count rectangle (fill) and optionally highlight (stroke) annotations."
 )
 
 uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
-st.sidebar.header("Target fill colors")
+st.sidebar.header("Target colors")
 
 default_colors = {
     "Analog Input": "#FFFF31",
@@ -36,17 +36,21 @@ tolerance = st.sidebar.slider(
     "RGB tolerance",
     min_value=0,
     max_value=80,
-    value=0,
-    help="0 means exact HEX match only. Higher values allow similar colors.",
+    value=2,
+)
+
+count_highlights = st.sidebar.checkbox(
+    "Also count highlight annotations (by stroke color)", value=True
 )
 
 show_details = st.sidebar.checkbox("Show annotation details", value=False)
 
 
+# ---------- COLOR HELPERS ----------
+
 def rgb_float_to_hex(rgb):
     if not rgb:
         return None
-
     r, g, b = rgb[:3]
     return "#{:02x}{:02x}{:02x}".format(
         int(round(r * 255)),
@@ -57,7 +61,7 @@ def rgb_float_to_hex(rgb):
 
 def hex_to_rgb(hex_color):
     hex_color = hex_color.replace("#", "")
-    return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def color_distance(hex1, hex2):
@@ -73,7 +77,7 @@ def color_distance(hex1, hex2):
 
 def match_color(actual_hex, configured_colors, tolerance):
     if actual_hex is None:
-        return "No fill color"
+        return "No color"
 
     best_name = "Other"
     best_distance = 999
@@ -90,7 +94,9 @@ def match_color(actual_hex, configured_colors, tolerance):
     return "Other"
 
 
-def count_rectangles(pdf_bytes, configured_colors, tolerance):
+# ---------- MAIN LOGIC ----------
+
+def count_annotations(pdf_bytes, configured_colors, tolerance, count_highlights):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     rows = []
 
@@ -100,14 +106,12 @@ def count_rectangles(pdf_bytes, configured_colors, tolerance):
 
         while annot:
             annot_type = annot.type[1]
+            colors = annot.colors or {}
 
+            # --- 1. RECTANGLES (Square) → FILL ONLY ---
             if annot_type == "Square":
-                colors = annot.colors or {}
-
-                # ONLY fill color is evaluated. Border/stroke color is ignored.
                 fill_hex = rgb_float_to_hex(colors.get("fill"))
 
-                # Only count rectangles with defined fill color
                 if fill_hex is not None:
                     matched_color = match_color(
                         fill_hex,
@@ -120,8 +124,36 @@ def count_rectangles(pdf_bytes, configured_colors, tolerance):
                     rows.append(
                         {
                             "Page": page_index + 1,
-                            "Annotation type": annot_type,
-                            "Detected fill HEX": fill_hex,
+                            "Type": "Square",
+                            "Color source": "Fill",
+                            "Detected HEX": fill_hex,
+                            "Matched color": matched_color,
+                            "X0": round(rect.x0, 2),
+                            "Y0": round(rect.y0, 2),
+                            "X1": round(rect.x1, 2),
+                            "Y1": round(rect.y1, 2),
+                        }
+                    )
+
+            # --- 2. HIGHLIGHTS → STROKE ONLY ---
+            elif annot_type == "Highlight" and count_highlights:
+                stroke_hex = rgb_float_to_hex(colors.get("stroke"))
+
+                if stroke_hex is not None:
+                    matched_color = match_color(
+                        stroke_hex,
+                        configured_colors,
+                        tolerance,
+                    )
+
+                    rect = annot.rect
+
+                    rows.append(
+                        {
+                            "Page": page_index + 1,
+                            "Type": "Highlight",
+                            "Color source": "Stroke",
+                            "Detected HEX": stroke_hex,
                             "Matched color": matched_color,
                             "X0": round(rect.x0, 2),
                             "Y0": round(rect.y0, 2),
@@ -136,29 +168,44 @@ def count_rectangles(pdf_bytes, configured_colors, tolerance):
     return pd.DataFrame(rows)
 
 
+# ---------- UI ----------
+
 if uploaded_file is not None:
     pdf_bytes = uploaded_file.read()
 
-    df = count_rectangles(pdf_bytes, color_config, tolerance)
+    df = count_annotations(
+        pdf_bytes,
+        color_config,
+        tolerance,
+        count_highlights,
+    )
 
     if df.empty:
-        st.warning("No filled rectangle / square annotations were found in this PDF.")
+        st.warning("No matching annotations found.")
     else:
         summary = (
             df.groupby("Matched color")
             .size()
-            .reset_index(name="Rectangle count")
-            .sort_values("Rectangle count", ascending=False)
+            .reset_index(name="Count")
+            .sort_values("Count", ascending=False)
         )
 
         st.subheader("Summary")
         st.dataframe(summary, use_container_width=True)
 
+        st.subheader("By annotation type")
+        type_summary = (
+            df.groupby(["Type", "Matched color"])
+            .size()
+            .reset_index(name="Count")
+        )
+        st.dataframe(type_summary, use_container_width=True)
+
         csv = summary.to_csv(index=False).encode("utf-8")
         st.download_button(
             "Download summary CSV",
             csv,
-            file_name="rectangle_color_count_summary.csv",
+            file_name="summary.csv",
             mime="text/csv",
         )
 
@@ -166,12 +213,5 @@ if uploaded_file is not None:
             st.subheader("Annotation details")
             st.dataframe(df, use_container_width=True)
 
-            details_csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download detailed CSV",
-                details_csv,
-                file_name="rectangle_color_count_details.csv",
-                mime="text/csv",
-            )
 else:
     st.info("Upload a PDF to start.")
