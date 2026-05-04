@@ -113,12 +113,15 @@ def count_rectangles(pdf_bytes, configured_colors, tolerance):
             if annot_type == "Square":
                 colors = annot.colors or {}
 
-                stroke_hex = rgb_float_to_hex(colors.get("stroke"))
                 fill_hex = rgb_float_to_hex(colors.get("fill"))
 
-                # Prefer fill color if available, otherwise stroke color
-                actual_hex = fill_hex or stroke_hex
-                matched_color = match_color(actual_hex, configured_colors, tolerance)
+                # Count ONLY rectangles with a defined fill color
+            if fill_hex is None:
+                annot = annot.next
+                continue
+
+            actual_hex = fill_hex
+            matched_color = match_color(actual_hex, configured_colors, tolerance)
 
                 rect = annot.rect
 
