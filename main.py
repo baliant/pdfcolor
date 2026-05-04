@@ -37,7 +37,7 @@ tolerance = st.sidebar.slider(
     "RGB tolerance",
     min_value=0,
     max_value=80,
-    value=25,
+    value=0,
     help="Higher tolerance groups visually similar colors together.",
 )
 
