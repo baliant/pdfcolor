@@ -1,5 +1,4 @@
 # app.py
-import io
 import fitz  # PyMuPDF
 import pandas as pd
 import streamlit as st
@@ -9,12 +8,12 @@ st.set_page_config(page_title="PDF Rectangle Color Counter", layout="wide")
 st.title("PDF Colored Rectangle Counter")
 
 st.write(
-    "Upload a PDF, define target colors, and count rectangle annotations by color."
+    "Upload a PDF, define target fill colors, and count rectangle annotations by fill color."
 )
 
 uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
-st.sidebar.header("Target colors")
+st.sidebar.header("Target fill colors")
 
 default_colors = {
     "Analog Input": "#FFFF31",
@@ -38,17 +37,13 @@ tolerance = st.sidebar.slider(
     min_value=0,
     max_value=80,
     value=0,
-    help="Higher tolerance groups visually similar colors together.",
+    help="0 means exact HEX match only. Higher values allow similar colors.",
 )
 
 show_details = st.sidebar.checkbox("Show annotation details", value=False)
 
 
 def rgb_float_to_hex(rgb):
-    """
-    PyMuPDF annotation colors are usually floats from 0 to 1.
-    Converts them to #RRGGBB.
-    """
     if not rgb:
         return None
 
@@ -78,7 +73,7 @@ def color_distance(hex1, hex2):
 
 def match_color(actual_hex, configured_colors, tolerance):
     if actual_hex is None:
-        return "No color"
+        return "No fill color"
 
     best_name = "Other"
     best_distance = 999
@@ -97,7 +92,6 @@ def match_color(actual_hex, configured_colors, tolerance):
 
 def count_rectangles(pdf_bytes, configured_colors, tolerance):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
     rows = []
 
     for page_index in range(len(doc)):
@@ -107,36 +101,34 @@ def count_rectangles(pdf_bytes, configured_colors, tolerance):
         while annot:
             annot_type = annot.type[1]
 
-            # Common rectangle-like annotation types:
-            # "Square" = rectangle annotation
-            # "Highlight" etc. are ignored by default
             if annot_type == "Square":
                 colors = annot.colors or {}
 
+                # ONLY fill color is evaluated. Border/stroke color is ignored.
                 fill_hex = rgb_float_to_hex(colors.get("fill"))
 
-                # Count ONLY rectangles with a defined fill color
-            if fill_hex is None:
-                annot = annot.next
-                continue
+                # Only count rectangles with defined fill color
+                if fill_hex is not None:
+                    matched_color = match_color(
+                        fill_hex,
+                        configured_colors,
+                        tolerance,
+                    )
 
-            actual_hex = fill_hex
-            matched_color = match_color(actual_hex, configured_colors, tolerance)
+                    rect = annot.rect
 
-                rect = annot.rect
-
-                rows.append(
-                    {
-                        "Page": page_index + 1,
-                        "Annotation type": annot_type,
-                        "Detected HEX": actual_hex,
-                        "Matched color": matched_color,
-                        "X0": round(rect.x0, 2),
-                        "Y0": round(rect.y0, 2),
-                        "X1": round(rect.x1, 2),
-                        "Y1": round(rect.y1, 2),
-                    }
-                )
+                    rows.append(
+                        {
+                            "Page": page_index + 1,
+                            "Annotation type": annot_type,
+                            "Detected fill HEX": fill_hex,
+                            "Matched color": matched_color,
+                            "X0": round(rect.x0, 2),
+                            "Y0": round(rect.y0, 2),
+                            "X1": round(rect.x1, 2),
+                            "Y1": round(rect.y1, 2),
+                        }
+                    )
 
             annot = annot.next
 
@@ -150,7 +142,7 @@ if uploaded_file is not None:
     df = count_rectangles(pdf_bytes, color_config, tolerance)
 
     if df.empty:
-        st.warning("No rectangle / square annotations were found in this PDF.")
+        st.warning("No filled rectangle / square annotations were found in this PDF.")
     else:
         summary = (
             df.groupby("Matched color")
