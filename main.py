@@ -17,11 +17,11 @@ uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 st.sidebar.header("Target colors")
 
 default_colors = {
-    "Yellow": "#FFFF31",
-    "Orange": "#FFBF28",
-    "Green": "#8ACF56",
-    "Blue": "#00AEED",
-    "Red": "#FF1318",
+    "Analog Input": "#FFFF31",
+    "Helyi kijelző": "#FFBF28",
+    "Vezérelt csap": "#8ACF56",
+    "Digital Input": "#00AEED",
+    "Motor": "#FF1318",
     "Purple": "#ff00ff",
 }
 
